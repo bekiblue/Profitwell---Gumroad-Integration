@@ -208,12 +208,11 @@ def process_sales():
                             churn_type = "voluntary"
                         if ended:
                             churn_type = "delinquent"
-
+                        
                         if cancelled or ended:
                             effective_date, current_token = serviceEnd(sale, token_generator, current_token)  # Handle token switching within serviceEnd
-                        
-                        if effective_date is None:
-                            continue  # Skip this sale if the effective date is not found due to an error
+                            if effective_date is None:
+                                continue  
 
                         # Check if the sale already exists in the database
                         existing_sale = sale_exists(sale_id)
