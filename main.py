@@ -7,7 +7,7 @@ import sqlite3
 
 # List of Gumroad access tokens
 access_tokens = [
-    "gumroad_access_token_1",
+    "uJe9AMa4xzT1wWNrsDAGIL2KvrZMHsjT2XI9xkpg72o",
     "gumroad_access_token_2",
     "gumroad_access_token_3",
     "gumroad_access_token_4",
@@ -42,18 +42,26 @@ def serviceEnd(sale, token_generator, current_token):
             # Parse the subscriber data from the response
             subscriber_data = response.json().get('subscriber')
 
+            # Extract the failed_at field
+            failed_at = subscriber_data.get('failed_at')
+            # If the failed_at field is present, return the failed_at as a UNIX timestamp
+            if failed_at:
+                failed_at = datetime.strptime(failed_at, "%Y-%m-%dT%H:%M:%SZ")
+                return int(time.mktime(failed_at.timetuple())), current_token
+            
+            # Extract the cancelled_at field
+            cancelled_at = subscriber_data.get('cancelled_at')
+            # If the cancelled_at field is present, return the cancelled_at as a UNIX timestamp
+            if cancelled_at:
+                cancelled_at = datetime.strptime(cancelled_at, "%Y-%m-%dT%H:%M:%SZ")
+                return int(time.mktime(cancelled_at.timetuple())), current_token
+            
             # Extract the ended_at field
             ended_at = subscriber_data.get('ended_at')
-
             # If the ended_at field is present, return the end date as a UNIX timestamp
             if ended_at:
                 end_date = datetime.strptime(ended_at, "%Y-%m-%dT%H:%M:%SZ")
                 return int(time.mktime(end_date.timetuple())), current_token
-            
-            cancelled_at = subscriber_data.get('cancelled_at')
-            if cancelled_at:
-                cancelled_at = datetime.strptime(cancelled_at, "%Y-%m-%dT%H:%M:%SZ")
-                return int(time.mktime(cancelled_at.timetuple())), current_token
         elif response.status_code == 400:
             print("A required parameter is missing")
             return None, current_token
@@ -104,7 +112,7 @@ def update_subscription_cancelled(subscription_id, cancelled):
 def churn_subscription(subscription_alias, effective_date, churn_type):
     url = f'https://api.profitwell.com/v2/subscriptions/{subscription_alias}/?effective_date={effective_date}&churn_type={churn_type}'
     headers = {
-        'Authorization': 'profitwell_private_key'
+        'Authorization': '9e3d8d8b590824cfcb942972e1b3ca60'
     }
 
     response = requests.delete(url, headers=headers)
@@ -123,15 +131,19 @@ def post_to_profitwell(sale):
     profitwell_url = "https://api.profitwell.com/v2/subscriptions/"
     headers = {
         'Content-Type': 'application/json',
-        'Authorization': 'profitwell_private_key'
+        'Authorization': '9e3d8d8b590824cfcb942972e1b3ca60'
     }
     # Map the plan interval using the function
     plan_interval = map_plan_interval(sale['subscription_duration'])
+    
+    #Truncate the email to 36 characters
+    user_alias = sale['email'][:36]
+
     # Prepare the data for ProfitWell
     values = {
-        "user_alias": sale['email'],  # or use your own user_alias
+        "user_alias": user_alias,  # or use your own user_alias
         "subscription_alias": sale['subscription_id'],  # Unique subscription alias
-        "email": sale['email'],
+        "email": user_alias,
         "plan_id": sale['product_id'],
         "plan_interval": plan_interval,
         "plan_currency": "usd",  # Adjust this if needed
