@@ -237,10 +237,11 @@ def process_sales():
                             # If the subscription exists and was previously active (not canceled) but now is canceled
                             if not existing_subscription[0] and (cancelled or ended):
                                 print(f"Updating cancellation status for subscription {subscription_id}.")
-                                update_subscription_cancelled(subscription_id, True)
-                                churn_subscription(subscription_id, effective_date, churn_type)
+                                churn_response = churn_subscription(subscription_id, effective_date, churn_type)
+                                if churn_response.status_code == 200:
+                                    update_subscription_cancelled(subscription_id, True)
                             else:
-                                print(f"Subscription {subscription_id} already cancelled or no change needed.")
+                                print(f"Subscription {subscription_id} already cancelled and processed before or no change needed.")
                                 continue
                         else:
                             # If the subscription is new, process it normally
@@ -249,12 +250,14 @@ def process_sales():
                                 print(f"Posted subscription {subscription_id} to ProfitWell successfully!")
                             else:
                                 print(f"Error posting subscription {subscription_id} to ProfitWell, status code {post_response.status_code}: {post_response.json()}")
+                                continue
                             
                             # If it's cancelled, churn the subscription
                             if churn_type:
                                 print(f"Churning subscription {subscription_id} with type {churn_type}")
-                                churn_subscription(subscription_id, effective_date, churn_type)
-                                mark_subscription_processed(subscription_id, True)
+                                churn_response=  churn_subscription(subscription_id, effective_date, churn_type)
+                                if churn_response.status_code == 200:
+                                    mark_subscription_processed(subscription_id, True)
                             else:
                                 mark_subscription_processed(subscription_id, False)
 
@@ -273,7 +276,7 @@ def process_sales():
         except StopIteration:
             print("All tokens exhausted. Please try again later.")
             break
-
+            
 if __name__ == "__main__":
     process_sales()
 
