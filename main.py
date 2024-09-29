@@ -7,7 +7,7 @@ import sqlite3
 
 # List of Gumroad access tokens
 access_tokens = [
-    "gumroad_access_token_2",
+    "gumroad_access_token_1",
     "gumroad_access_token_2",
     "gumroad_access_token_3",
     "gumroad_access_token_4",
