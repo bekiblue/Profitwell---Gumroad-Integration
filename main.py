@@ -7,7 +7,7 @@ import sqlite3
 
 # List of Gumroad access tokens
 access_tokens = [
-    "uJe9AMa4xzT1wWNrsDAGIL2KvrZMHsjT2XI9xkpg72o",
+    "gumroad_access_token_2",
     "gumroad_access_token_2",
     "gumroad_access_token_3",
     "gumroad_access_token_4",
@@ -112,7 +112,7 @@ def update_subscription_cancelled(subscription_id, cancelled):
 def churn_subscription(subscription_alias, effective_date, churn_type):
     url = f'https://api.profitwell.com/v2/subscriptions/{subscription_alias}/?effective_date={effective_date}&churn_type={churn_type}'
     headers = {
-        'Authorization': '9e3d8d8b590824cfcb942972e1b3ca60'
+        'Authorization': 'profitwell_private_key'
     }
 
     response = requests.delete(url, headers=headers)
@@ -131,7 +131,7 @@ def post_to_profitwell(sale):
     profitwell_url = "https://api.profitwell.com/v2/subscriptions/"
     headers = {
         'Content-Type': 'application/json',
-        'Authorization': '9e3d8d8b590824cfcb942972e1b3ca60'
+        'Authorization': 'profitwell_private_key'
     }
     # Map the plan interval using the function
     plan_interval = map_plan_interval(sale['subscription_duration'])
