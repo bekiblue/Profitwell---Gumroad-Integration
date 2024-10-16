@@ -235,7 +235,7 @@ def process_sales():
                         
                         if existing_subscription:
                             # If the subscription exists and was previously active (not canceled) but now is canceled
-                            if not existing_subscription[0] and (cancelled or ended):
+                            if not existing_subscription[0] and (churn_type):
                                 print(f"Updating cancellation status for subscription {subscription_id}.")
                                 churn_response = churn_subscription(subscription_id, effective_date, churn_type)
                                 if churn_response.status_code == 200:
