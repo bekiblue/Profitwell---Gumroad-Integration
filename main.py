@@ -4,7 +4,6 @@ import requests
 import time
 import sqlite3
 
-
 # List of Gumroad access tokens
 access_tokens = [
     "gumroad_access_token_1",
@@ -13,6 +12,12 @@ access_tokens = [
     "gumroad_access_token_4",
     "gumroad_access_token_5"
 ]
+
+# Rate-limiting constants
+MAX_REQUESTS = 25  # Max burst requests
+TIME_WINDOW = 5    # Time window in seconds
+requests_in_window = 0
+last_request_time = time.time()
 
 # Connect to SQLite database (or create it)
 conn = sqlite3.connect('database.db')
@@ -25,6 +30,37 @@ cursor.execute('''CREATE TABLE IF NOT EXISTS processed_subscriptions (
                  )''')
 conn.commit()
 
+# Rate-limited request handler
+def rate_limited_request(url, method='get', headers=None, params=None, data=None):
+    """Handles API requests while respecting rate limits."""
+    global requests_in_window, last_request_time
+
+    current_time = time.time()
+    elapsed_time = current_time - last_request_time
+
+    if requests_in_window >= MAX_REQUESTS and elapsed_time < TIME_WINDOW:
+        sleep_time = TIME_WINDOW - elapsed_time
+        print(f"Rate limit reached. Sleeping for {sleep_time:.2f} seconds...")
+        time.sleep(sleep_time)
+        requests_in_window = 0
+        last_request_time = time.time()
+
+    try:
+        if method == 'get':
+            response = requests.get(url, headers=headers, params=params)
+        elif method == 'post':
+            response = requests.post(url, headers=headers, json=data)
+        elif method == 'delete':
+            response = requests.delete(url, headers=headers)
+        else:
+            raise ValueError("Unsupported HTTP method")
+
+        requests_in_window += 1
+        return response
+    except requests.exceptions.RequestException as e:
+        print(f"Request failed: {e}")
+        return None
+
 # Function to handle subscription service end logic
 def serviceEnd(sale, token_generator, current_token):
     subscription_id = sale.get('subscription_id')
@@ -36,47 +72,42 @@ def serviceEnd(sale, token_generator, current_token):
             "access_token": current_token
         }
 
-        response = requests.get(url, params=params)
+        response = rate_limited_request(url, method='get', params=params)
 
-        if response.status_code == 200:
+        if response and response.status_code == 200:
             # Parse the subscriber data from the response
             subscriber_data = response.json().get('subscriber')
 
             # Extract the failed_at field
             failed_at = subscriber_data.get('failed_at')
-            # If the failed_at field is present, return the failed_at as a UNIX timestamp
             if failed_at:
                 failed_at = datetime.strptime(failed_at, "%Y-%m-%dT%H:%M:%SZ")
                 return int(time.mktime(failed_at.timetuple())), current_token
-            
+
             # Extract the cancelled_at field
             cancelled_at = subscriber_data.get('cancelled_at')
-            # If the cancelled_at field is present, return the cancelled_at as a UNIX timestamp
             if cancelled_at:
                 cancelled_at = datetime.strptime(cancelled_at, "%Y-%m-%dT%H:%M:%SZ")
                 return int(time.mktime(cancelled_at.timetuple())), current_token
-            
+
             # Extract the ended_at field
             ended_at = subscriber_data.get('ended_at')
-            # If the ended_at field is present, return the end date as a UNIX timestamp
             if ended_at:
                 end_date = datetime.strptime(ended_at, "%Y-%m-%dT%H:%M:%SZ")
                 return int(time.mktime(end_date.timetuple())), current_token
-        elif response.status_code == 400:
+        elif response and response.status_code == 400:
             print("A required parameter is missing")
             return None, current_token
-        elif response.status_code == 401:
+        elif response and response.status_code == 401:
             print("An invalid Gumroad access token.")
             return None, current_token
-        else:  # Rate limit
-            print("Rate limit reached. Switching tokens...")
+        else:
+            print("Rate limit reached or other error. Switching tokens...")
             try:
                 current_token = next(token_generator)
             except StopIteration:
-                # All tokens exhausted
                 print("All tokens exhausted. Please try again later.")
                 return None, current_token
-
 
 # Function to map plan intervals for ProfitWell
 def map_plan_interval(gumroad_interval):
@@ -89,24 +120,20 @@ def map_plan_interval(gumroad_interval):
     }
     return interval_mapping.get(gumroad_interval, 'month')  # Default to 'month' if no match
 
-
 # Function to check if a subscription exists in the database and get its cancellation status
 def subscription_exists_and_cancelled(subscription_id):
     cursor.execute("SELECT cancelled FROM processed_subscriptions WHERE subscription_id = ?", (subscription_id,))
     return cursor.fetchone()  # Returns (cancelled,) or None if not found
-
 
 # Function to mark a subscription as processed and store its cancellation status
 def mark_subscription_processed(subscription_id, cancelled):
     cursor.execute("INSERT INTO processed_subscriptions (subscription_id, cancelled) VALUES (?, ?)", (subscription_id, cancelled))
     conn.commit()
 
-
 # Function to update the cancellation status of a subscription
 def update_subscription_cancelled(subscription_id, cancelled):
     cursor.execute("UPDATE processed_subscriptions SET cancelled = ? WHERE subscription_id = ?", (cancelled, subscription_id))
     conn.commit()
-
 
 # Function to cancel a subscription in ProfitWell
 def churn_subscription(subscription_alias, effective_date, churn_type):
@@ -115,16 +142,14 @@ def churn_subscription(subscription_alias, effective_date, churn_type):
         'Authorization': 'profitwell_private_key'
     }
 
-    response = requests.delete(url, headers=headers)
+    response = rate_limited_request(url, method='delete', headers=headers)
 
-    if response.status_code == 200:
+    if response and response.status_code == 200:
         print(f"Subscription {subscription_alias} successfully churned as {churn_type}.")
     else:
-        print(f"Error churning subscription {subscription_alias}: {response.status_code}")
-        print(response.text)
+        print(f"Error churning subscription {subscription_alias}: {response.status_code if response else 'No Response'}")
 
     return response
-
 
 # Function to post sales data to ProfitWell
 def post_to_profitwell(sale):
@@ -136,7 +161,7 @@ def post_to_profitwell(sale):
     # Map the plan interval using the function
     plan_interval = map_plan_interval(sale['subscription_duration'])
     
-    #Truncate the email to 36 characters
+    # Truncate the email to 36 characters
     user_alias = sale['email'][:36]
 
     # Prepare the data for ProfitWell
@@ -151,9 +176,8 @@ def post_to_profitwell(sale):
         "value": sale['price'],
         "effective_date": int(time.mktime(time.strptime(sale['created_at'], "%Y-%m-%dT%H:%M:%SZ")))  # Convert to UNIX timestamp
     }
-    response = requests.post(profitwell_url, json=values, headers=headers)
+    response = rate_limited_request(profitwell_url, method='post', headers=headers, data=values)
     return response
-
 
 # Function to get sales data from Gumroad using the current token
 def get_sales_data(token_generator, current_token, page_key=None):
@@ -163,34 +187,30 @@ def get_sales_data(token_generator, current_token, page_key=None):
     }
     if page_key:
         params["page_key"] = page_key
-    
-    response = requests.get(url, params=params)
-    if response.status_code == 200:
+
+    response = rate_limited_request(url, method='get', params=params)
+    if response and response.status_code == 200:
         return response, current_token
-    elif response.status_code == 400:
+    elif response and response.status_code == 400:
         print("A required parameter is missing")
         return None, current_token
-    elif response.status_code == 401:
+    elif response and response.status_code == 401:
         print("An invalid Gumroad access token.")
         return None, current_token
-    # If rate limit or other error, rotate tokens
-    else:  # Rate limit
-        print(f"Error fetching sales data: {response.status_code}")
-        print("Rate limit reached. Switching tokens...")
+    else:
+        print(f"Error fetching sales data: {response.status_code if response else 'No Response'}")
+        print("Rate limit reached or other error. Switching tokens...")
         try:
-            current_token = next(token_generator)  # Switch to next token
+            current_token = next(token_generator)
         except StopIteration:
-            # All tokens exhausted
-            print("All tokens exhausted. Please try again later.")
+            print("All tokens exhausted. Cannot fetch more sales data.")
             return None, None
-        return get_sales_data(token_generator, current_token, page_key)  # Retry with new token
-
+        return get_sales_data(token_generator, current_token, page_key)
 
 # Function to rotate through access tokens
 def rotate_tokens():
     for token in access_tokens:
         yield token
-
 
 # Main function to process sales and work with subscriptions
 def process_sales():
@@ -238,7 +258,7 @@ def process_sales():
                             if not existing_subscription[0] and (churn_type):
                                 print(f"Updating cancellation status for subscription {subscription_id}.")
                                 churn_response = churn_subscription(subscription_id, effective_date, churn_type)
-                                if churn_response.status_code == 200:
+                                if churn_response and churn_response.status_code == 200:
                                     update_subscription_cancelled(subscription_id, True)
                             else:
                                 print(f"Subscription {subscription_id} already cancelled and processed before or no change needed.")
@@ -246,17 +266,17 @@ def process_sales():
                         else:
                             # If the subscription is new, process it normally
                             post_response = post_to_profitwell(sale)
-                            if post_response.status_code == 200 or post_response.status_code == 201:
+                            if post_response and post_response.status_code in [200, 201]:
                                 print(f"Posted subscription {subscription_id} to ProfitWell successfully!")
                             else:
-                                print(f"Error posting subscription {subscription_id} to ProfitWell, status code {post_response.status_code}: {post_response.json()}")
+                                print(f"Error posting subscription {subscription_id} to ProfitWell, status code {post_response.status_code if post_response else 'No Response'}")
                                 continue
                             
                             # If it's cancelled, churn the subscription
                             if churn_type:
                                 print(f"Churning subscription {subscription_id} with type {churn_type}")
                                 churn_response=  churn_subscription(subscription_id, effective_date, churn_type)
-                                if churn_response.status_code == 200:
+                                if churn_response and churn_response.status_code == 200:
                                     mark_subscription_processed(subscription_id, True)
                             else:
                                 mark_subscription_processed(subscription_id, False)
@@ -268,8 +288,7 @@ def process_sales():
                     break
 
             else:
-                print(f"Error fetching data from Gumroad: {response.status_code}")
-                print(response.json())
+                print(f"Error fetching data from Gumroad: {response.status_code if response else 'No Response'}")
                 current_token = next(token_generator)  # Switch to the next token if an error occurs
                 continue
 
